@@ -1,5 +1,5 @@
 {
-  "name": "image-optimizer",
+  "name": "mio",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -21,7 +21,10 @@
   },
   "license": "GPL-3.0-or-later",
   "scripts": {
+    "dev": "vite",
     "build": "vite build",
-    "test": "node test/engine.mjs"
+    "build:embed": "vite build --mode embed",
+    "preview": "vite preview",
+    "test": "node test/compare.mjs"
   }
 }

@@ -1,6 +1,7 @@
 // The tool page. It reads files, calls the engine, and writes results. All image work is in ../engine.
 import { runBatch, viewableOriginal } from '../engine/index.js';
 import { openCompare, setupCompare } from './compare.js';
+import './tool.css';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'image-optimizer-settings';
@@ -409,22 +410,20 @@ function renderResults() {
   const body = $('rows');
   body.replaceChildren(...sortedRows().map((row) => {
     const tr = document.createElement('tr');
-    tr.className = 'border-t border-zinc-200';
     const folder = folderOf(row.path);
     const saved = savedPercent(row);
 
     const name = document.createElement('td');
-    name.className = 'py-3 pr-4 break-all';
     if (folder) {
       const span = document.createElement('span');
-      span.className = 'text-zinc-500';
+      span.className = 'mio-path';
       span.textContent = folder;
       name.append(span);
     }
     if (row.comparable) {
       const open = document.createElement('button');
       open.type = 'button';
-      open.className = 'tool-focus rounded text-left underline underline-offset-2';
+      open.className = 'mio-focus mio-name';
       open.textContent = baseName(row.path);
       open.setAttribute('aria-label', `Compare ${baseName(row.path)} with the original`);
       open.addEventListener('click', () => compareRow(row));
@@ -434,19 +433,18 @@ function renderResults() {
     }
 
     const sizes = document.createElement('td');
-    sizes.className = 'py-3 pr-4 whitespace-nowrap';
+    sizes.className = 'mio-sizes';
     sizes.textContent = row.after == null ? formatSize(row.before) : `${formatSize(row.before)} → ${formatSize(row.after)}`;
 
     const percent = document.createElement('td');
-    percent.className = 'py-3 pr-4 font-medium';
+    percent.className = 'mio-saved';
     percent.textContent = saved == null ? '—' : `${saved}%`;
 
     const format = document.createElement('td');
-    format.className = 'py-3 pr-4';
     format.textContent = FORMAT_LABEL[row.format] ?? '—';
 
     const flags = document.createElement('td');
-    flags.className = 'py-3 text-sm text-zinc-600';
+    flags.className = 'mio-flags';
     flags.textContent = row.flags.join(' · ');
 
     tr.append(name, sizes, percent, format, flags);

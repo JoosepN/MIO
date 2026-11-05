@@ -25,7 +25,7 @@ page.on('requestfailed', (r) => problems.push(`request failed: ${r.url()}`));
 page.on('response', (r) => { if (r.status() >= 400) problems.push(`${r.status()}: ${r.url()}`); });
 
 async function runWith(label, setup) {
-  await page.goto(`${base}/tools/image-optimizer/`);
+  await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await setup();

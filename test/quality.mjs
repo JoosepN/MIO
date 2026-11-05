@@ -18,14 +18,14 @@ const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 
-await page.goto(`${base}/tools/image-optimizer/`);
+await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
 await page.evaluate(() => localStorage.clear());
 await page.reload();
 console.log('Default level:', await page.locator('input[name="quality"]:checked').inputValue());
 
 for (const convert of ['keep', 'jpeg', 'webp']) {
   for (const quality of ['smaller', 'balanced', 'higher']) {
-    await page.goto(`${base}/tools/image-optimizer/`);
+    await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
     await page.locator(`input[name="convert"][value="${convert}"]`).check({ force: true });
     await page.locator(`input[name="quality"][value="${quality}"]`).check({ force: true });
     await page.locator('#pick-files').setInputFiles(files);

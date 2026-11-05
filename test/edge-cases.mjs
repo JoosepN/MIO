@@ -41,7 +41,7 @@ const problems = [];
 page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
 
 async function run(name, convert, extra = async () => {}) {
-  await page.goto(`${base}/tools/image-optimizer/`);
+  await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
   await page.locator(`input[value="${convert}"]`).check({ force: true });

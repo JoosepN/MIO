@@ -1,0 +1,136 @@
+<div class="mio">
+    <div id="drop" class="mio-drop" data-over="false">
+        <p class="mio-drop-title">Drop images or folders here</p>
+        <p class="mio-drop-hint">JPEG, PNG, WebP, HEIC, AVIF and BMP. Folder structure is kept.</p>
+        <div class="mio-drop-actions">
+            <label class="mio-btn mio-btn-md mio-btn-outline mio-btn-hover">
+                Choose files
+                <input id="pick-files" type="file" multiple class="mio-sr">
+            </label>
+            <label class="mio-btn mio-btn-md mio-btn-outline mio-btn-hover">
+                Choose folder
+                <input id="pick-folder" type="file" webkitdirectory class="mio-sr">
+            </label>
+        </div>
+        <p class="mio-file-row" aria-live="polite">
+            <span id="file-count"></span>
+            <button id="clear" type="button" hidden class="mio-focus mio-link">Clear</button>
+        </p>
+    </div>
+
+    <div class="mio-card mio-settings">
+        <fieldset>
+            <legend class="mio-heading">Resize <span class="mio-optional">(optional)</span></legend>
+            <div class="mio-fields">
+                <label class="mio-field">Max width
+                    <span class="mio-input-wrap">
+                        <input id="width" type="number" min="1" inputmode="numeric">
+                        <span class="mio-unit">px</span>
+                    </span>
+                </label>
+                <label class="mio-field">Max height
+                    <span class="mio-input-wrap">
+                        <input id="height" type="number" min="1" inputmode="numeric">
+                        <span class="mio-unit">px</span>
+                    </span>
+                </label>
+            </div>
+            <label class="mio-check">
+                <input id="no-enlarge" type="checkbox" checked class="mio-focus">
+                Don't enlarge smaller images
+            </label>
+        </fieldset>
+
+        <fieldset>
+            <legend class="mio-heading">Format</legend>
+            <div class="mio-choices">
+                <label class="mio-choice"><input type="radio" name="convert" value="keep" checked class="mio-sr"><span>Keep original</span></label>
+                <label class="mio-choice"><input type="radio" name="convert" value="webp" class="mio-sr"><span>WebP</span></label>
+                <label class="mio-choice"><input type="radio" name="convert" value="jpeg" class="mio-sr"><span>JPEG</span></label>
+                <label class="mio-choice"><input type="radio" name="convert" value="png" class="mio-sr"><span>PNG</span></label>
+                <label class="mio-choice"><input type="radio" name="convert" value="smallest" class="mio-sr"><span>Smallest</span></label>
+            </div>
+            <label id="fill-row" hidden class="mio-check">
+                <input id="fill" type="color" value="#ffffff" class="mio-focus">
+                Background for transparent images
+            </label>
+
+            <div class="mio-quality" role="radiogroup" aria-labelledby="quality-label">
+                <p id="quality-label" class="mio-heading">Quality</p>
+                <div class="mio-choices">
+                    <label class="mio-choice"><input type="radio" name="quality" value="smaller" class="mio-sr"><span>Smaller files</span></label>
+                    <label class="mio-choice"><input type="radio" name="quality" value="balanced" checked class="mio-sr"><span>Balanced</span></label>
+                    <label class="mio-choice"><input type="radio" name="quality" value="higher" class="mio-sr"><span>Higher quality</span></label>
+                </div>
+                <p class="mio-help">Use Higher quality for screenshots with small text.</p>
+            </div>
+        </fieldset>
+    </div>
+
+    <div class="mio-actions">
+        <button id="run" type="button" disabled class="mio-focus mio-btn mio-btn-lg mio-btn-primary">Run</button>
+        <button id="folder-instead" type="button" hidden class="mio-focus mio-link mio-link-body">Save to a folder instead</button>
+        <button id="cancel" type="button" hidden class="mio-focus mio-btn mio-btn-lg mio-btn-outline mio-btn-hover-strong">Cancel</button>
+        <button id="zip" type="button" hidden class="mio-focus mio-btn mio-btn-lg mio-btn-primary">Download</button>
+        <p id="output-note" class="mio-help mio-note" aria-live="polite"></p>
+    </div>
+
+    <div id="progress-wrap" hidden class="mio-card">
+        <p id="progress-label" class="mio-progress-label" aria-live="polite"></p>
+        <progress id="progress" value="0" max="1" aria-label="Batch progress"></progress>
+    </div>
+
+    <div id="results" hidden class="mio-card">
+        <div class="mio-totals">
+            <p id="total-saved"></p>
+            <p class="mio-totals-text">saved · <span id="total-sizes"></span> · <span id="total-count"></span></p>
+        </div>
+        <p id="compare-hint" hidden class="mio-help">Select an image's name to compare it with the original.</p>
+        <div class="mio-table-wrap">
+            <table class="mio-table">
+                <thead>
+                    <tr>
+                        <th><button type="button" data-sort="name" class="mio-focus mio-sort">Name</button></th>
+                        <th><button type="button" data-sort="after" class="mio-focus mio-sort">Before → after</button></th>
+                        <th><button type="button" data-sort="saved" class="mio-focus mio-sort">Saved</button></th>
+                        <th><button type="button" data-sort="format" class="mio-focus mio-sort">Format</button></th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <p class="mio-footer">Free software under the <a href="https://github.com/JoosepN/MIO/blob/main/LICENSE">GPL-3.0 license</a>. <a href="https://github.com/JoosepN/MIO">Source code on GitHub</a>.</p>
+
+    <dialog id="overwrite" class="mio-dialog">
+        <form method="dialog">
+            <h2>Overwrite existing files?</h2>
+            <p class="mio-dialog-text">This folder already has files with the same names, like <span id="overwrite-example"></span>.</p>
+            <div class="mio-dialog-actions">
+                <button value="cancel" class="mio-focus mio-btn mio-btn-md mio-btn-outline">Cancel</button>
+                <button value="overwrite" class="mio-focus mio-btn mio-btn-md mio-btn-primary">Overwrite all</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="compare" aria-labelledby="compare-title" class="mio-dialog">
+        <div class="mio-compare-head">
+            <h2 id="compare-title"></h2>
+            <button id="compare-zoom" type="button" aria-pressed="false" class="mio-focus mio-btn mio-btn-sm mio-btn-outline">Full size</button>
+            <form method="dialog"><button class="mio-focus mio-btn mio-btn-sm mio-btn-primary">Close</button></form>
+        </div>
+        <div id="compare-frame" tabindex="0" role="group" aria-label="Before and after comparison" data-zoom="fit">
+            <div id="compare-stage">
+                <img id="compare-after" alt="Optimized image">
+                <img id="compare-before" alt="Original image">
+            </div>
+            <div id="compare-handle" role="slider" tabindex="0" aria-label="Divider between original and optimized" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
+            <p id="compare-label-before" class="mio-compare-label"></p>
+            <p id="compare-label-after" class="mio-compare-label"></p>
+            <p id="compare-status" hidden></p>
+        </div>
+        <p id="compare-help" class="mio-help"></p>
+    </dialog>
+</div>

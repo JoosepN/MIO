@@ -17,36 +17,56 @@ Try it at [joosepnoorvali.com/tools/image-optimizer](https://joosepnoorvali.com/
 
 Animated images, video, PDF and camera RAW files are skipped and listed.
 
-## How it's organised
-
-| Folder | Contents |
-|---|---|
-| `engine/` | Queue, workers and the image pipeline. It doesn't depend on the UI. |
-| `ui/` | The tool's page logic and comparison view. |
-| `page/` | The page markup, an Eleventy template that relies on the host site's layout and Tailwind styles. |
-| `test/` | Browser tests that drive the real page with Playwright. |
-
-## Build
+## Run it
 
 ```
 npm install
-OUT_DIR=dist npm run build
+npm run dev
 ```
 
-Without `OUT_DIR`, the build goes into the portfolio site this tool was built for. The page loads the script from `/tools/image-optimizer/app/main.js`, which is set by `base` in `vite.config.js`.
+## Deploy it
+
+```
+npm run build
+```
+
+Upload the `dist` folder to any static host. It needs no server, and it runs from any path.
+
+## Put it inside your own page
+
+```
+npm run build:embed
+```
+
+This puts `main.js`, `tool.css` and the codecs in `dist`, without a page. Then, on your page:
+
+1. Add the contents of `ui/tool.html` where the tool should appear.
+2. Link `tool.css`, and load `main.js` with `<script type="module">`.
+3. To match your colours, set the `--mio-*` variables from the top of `ui/tool.css` on `html .mio`.
+
+## How it's organised
+
+| Path | Contents |
+|---|---|
+| `engine/` | Queue, workers and the image pipeline. It doesn't depend on the UI. |
+| `ui/` | The tool's markup, styles, page logic and comparison view. |
+| `index.html` | The standalone page around the tool. |
+| `test/` | Browser tests that drive the real page with Playwright. |
 
 ## Test
 
-The tests need the page running on a local server, by default at `http://localhost:8080`, and images of your own in `test/samples/`, as no sample images are included. `test/quality.mjs` and `test/compare.mjs` name the files they expect at the top of the script.
+The tests need the tool running, and images of your own in `test/samples/`, as no sample images are included. `test/quality.mjs`, `test/compare.mjs` and `test/visual.mjs` name the files they expect at the top of the script.
 
 ```
-npx playwright install chromium
-node test/compare.mjs <screenshot folder>
+npx playwright install chromium firefox
+npm run build
+npm run preview -- --port 8080
+MIO_PATH=/ node test/compare.mjs <screenshot folder>
 ```
 
 ## License
 
-[GPL-3.0-or-later](LICENSE), because the tool uses libimagequant, which is GPL-3.
+[GPL-3.0-or-later](LICENSE), because the tool uses libimagequant, which is GPL-3. If you publish a modified version, the GPL requires you to share its source too, so update the links at the bottom of `ui/tool.html` to point to your fork.
 
 | Library | Used for | License |
 |---|---|---|

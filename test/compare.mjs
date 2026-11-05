@@ -19,7 +19,7 @@ async function session(options) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(`${base}/tools/image-optimizer/`);
+  await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
   await page.locator('#pick-files').setInputFiles(files);
   await page.locator('#run').click();
   await page.waitForFunction(() => /^Finished/.test(document.getElementById('progress-label').textContent), null, { timeout: 180000 });

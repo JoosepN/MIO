@@ -48,7 +48,7 @@ const clearLabel = () => page.locator('#progress-label').evaluate((el) => { el.t
 const clickRun = async () => { await clearLabel(); await page.locator('#run').click(); };
 const clickFolder = async () => { await clearLabel(); await page.locator('#folder-instead').click(); };
 const finished = () => page.waitForFunction(() => /^(Finished|Cancelled)/.test(document.getElementById('progress-label').textContent), null, { timeout: 120000 });
-const open = async () => { await page.goto(`${base}/tools/image-optimizer/`); await page.evaluate(() => localStorage.clear()); await page.reload(); };
+const open = async () => { await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`); await page.evaluate(() => localStorage.clear()); await page.reload(); };
 const listOutput = () => page.evaluate(async () => {
   const out = [];
   const walk = async (dir, prefix) => {
