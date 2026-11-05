@@ -60,6 +60,9 @@ async function run(name, convert, extra = async () => {}) {
   rmSync(zip);
   console.log(`\n=== ${name}`);
   rows.forEach((r) => console.log(`  ${r}`));
+  // Two outputs with one name would leave fewer files than images after extracting.
+  const expected = rows.filter((r) => !r.includes('Skipped')).length;
+  if (readdirSync(dir).length !== expected) problems.push(`${name}: ${expected} images but ${readdirSync(dir).length} files`);
   for (const f of readdirSync(dir)) {
     const m = await sharp(join(dir, f)).metadata();
     console.log(`  -> ${f}  ${m.format} ${m.width}x${m.height} ${statSync(join(dir, f)).size}B alpha:${m.hasAlpha} exif:${!!m.exif} icc:${!!m.icc} orient:${m.orientation ?? '-'}`);

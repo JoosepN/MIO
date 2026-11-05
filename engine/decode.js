@@ -38,7 +38,7 @@ const toLinear = new Float32Array(256).map((_, i) => {
 const toGamma = (v) => {
   if (v <= 0) return 0;
   if (v >= 1) return 255;
-  return 255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055) + 0.5;
+  return 255 * (v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055); // The clamped array rounds it.
 };
 
 function displayP3ToSrgb(data) {

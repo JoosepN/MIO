@@ -1,20 +1,22 @@
 // One encode per output format. Codecs load on first use, so a JPEG batch never fetches the PNG ones.
-import { PNG_MIN_QUALITY } from './config.js';
+import { PNG_MIN_QUALITY, SEARCH_START } from './config.js';
 import { decodeWithBrowser } from './decode.js';
 import { meetsTarget, searchQuality } from './quality.js';
 
+async function encodeLossy(image, target, format, encode) {
+  const run = (img, quality) => encode(img, { quality });
+  const { quality } = await searchQuality(image, run, target, SEARCH_START[format]);
+  return { bytes: await run(image, quality), quality };
+}
+
 async function encodeJpeg(image, target) {
   const { default: encode } = await import('@jsquash/jpeg/encode');
-  const run = (img, quality) => encode(img, { quality });
-  const { quality } = await searchQuality(image, run, target);
-  return { bytes: await run(image, quality), quality };
+  return encodeLossy(image, target, 'jpeg', encode);
 }
 
 async function encodeWebp(image, target) {
   const { default: encode } = await import('@jsquash/webp/encode');
-  const run = (img, quality) => encode(img, { quality });
-  const { quality } = await searchQuality(image, run, target);
-  return { bytes: await run(image, quality), quality };
+  return encodeLossy(image, target, 'webp', encode);
 }
 
 async function quantize(image) {

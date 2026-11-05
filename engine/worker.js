@@ -1,4 +1,7 @@
 import { optimize, thumbnail, viewable } from './pipeline.js';
+import { setScoreListener } from './quality.js';
+
+setScoreListener((msPerMP) => postMessage({ msPerMP }));
 
 self.onmessage = async ({ data: { id, file, settings, preview, thumbSize } }) => {
   if (preview) {

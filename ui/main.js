@@ -1,11 +1,13 @@
 // The tool page. It reads files, calls the engine, and writes results. All image work is in ../engine.
-import { createThumbnailer, runBatch, viewableOriginal } from '../engine/index.js';
+import { createThumbnailer, defaultConcurrency, runBatch, viewableOriginal } from '../engine/index.js';
 import { openCompare, setupCompare } from './compare.js';
+import { createPacer } from './progress.js';
 import './tool.css';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'image-optimizer-settings';
 const THUMB_SIZE = 112; // Twice the size it's shown at, for sharp screens.
+const PROGRESS_INTERVAL = 100;
 const canPickFolder = 'showDirectoryPicker' in window;
 const supported = 'OffscreenCanvas' in window; // Safari before 16.4 can't process images in a worker.
 
@@ -82,7 +84,7 @@ function addFile(file, path) {
 
 const freshResult = (file) => ({
   status: 'waiting', before: file.size, after: null, format: null, source: null,
-  comparable: false, flags: [], blob: null, outputPath: null,
+  comparable: false, flags: [], blob: null, outputPath: null, progress: 0,
 });
 
 function readEntries(reader) {
@@ -152,19 +154,23 @@ const stem = (name) => (name.includes('.') ? name.slice(0, name.lastIndexOf('.')
 const extOf = (name) => (name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '');
 
 // Same filename, only the extension changes when the format does.
+// No two files may share a path, or one would replace the other.
 function outputPath(item, result) {
   const folder = folderOf(item.path);
   const name = baseName(item.path);
-  if (!result.extension || (result.sameFormat && ['jpg', 'jpeg', 'png', 'webp'].includes(extOf(name)))) {
-    return { path: folder + name, renamed: false };
-  }
-  let path = `${folder}${stem(name)}.${result.extension}`;
-  let renamed = false;
-  if (state.usedNames.has(path.toLowerCase())) {
-    path = `${folder}${stem(name)} (${extOf(name)}).${result.extension}`;
-    renamed = true;
-  }
-  return { path, renamed };
+  const original = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
+  const keepsName = !result.extension || (result.sameFormat && ['jpg', 'jpeg', 'png', 'webp'].includes(extOf(name)));
+  const extension = keepsName ? original : result.extension;
+  const build = (suffix) => `${folder}${stem(name)}${suffix}${extension ? `.${extension}` : ''}`;
+  // A converted file also stays clear of the input names, so finishing first can't take another file's name.
+  const free = (path) => !state.usedNames.has(path.toLowerCase()) && (keepsName || !state.items.some((other) => other.path.toLowerCase() === path.toLowerCase()));
+
+  if (free(build(''))) return { path: build(''), renamed: false };
+  // A format change names the source format, so photo.png becomes photo (png).webp.
+  if (!keepsName && extOf(name) && free(build(` (${extOf(name)})`))) return { path: build(` (${extOf(name)})`), renamed: true };
+  let copy = 2;
+  while (!free(build(` (${copy})`))) copy++;
+  return { path: build(` (${copy})`), renamed: true };
 }
 
 async function directoryFor(root, path, create) {
@@ -274,16 +280,34 @@ async function start(rerun) {
   let done = 0;
   const total = state.items.length;
   setProgress(0, total);
+  $('progress').value = 0;
 
   // Saving is async, so results are delivered one at a time and "done" waits for the last save.
   let delivering = Promise.resolve();
 
-  state.batch = runBatch(state.items, readSettings(), {
+  const settings = readSettings();
+  const concurrency = defaultConcurrency();
+  const pacer = createPacer(state.items, settings, Math.min(concurrency, total));
+  const ticker = setInterval(() => {
+    pacer.tick();
+    $('progress').value = pacer.batch;
+    for (const item of state.items) {
+      if (item.status !== 'running') continue;
+      item.progress = pacer.value(item.id);
+      drawRowProgress(item);
+    }
+  }, PROGRESS_INTERVAL);
+
+  state.batch = runBatch(state.items, settings, {
+    concurrency,
+    onScore: (msPerMP) => pacer.scored(msPerMP),
     onStart: (item) => {
+      pacer.start(item.id);
       item.status = 'running';
       updateRow(item);
     },
     onResult: (item, result) => {
+      pacer.finish(item.id);
       delivering = delivering.then(async () => {
         await deliver(item, result);
         done++;
@@ -293,6 +317,8 @@ async function start(rerun) {
       });
     },
     onDone: async ({ cancelled }) => {
+      clearInterval(ticker);
+      if (!cancelled) $('progress').value = 1;
       await delivering;
       state.running = false;
       state.batch = null;
@@ -327,6 +353,7 @@ async function deliver(item, result) {
   state.usedNames.add(path.toLowerCase());
   item.outputPath = path;
   if (result.kept) item.flags.push('Kept original');
+  if (result.after > result.before) item.flags.push('Larger than the original');
   if (result.filled) item.flags.push('Transparency filled');
   if (renamed) item.flags.push('Renamed');
 
@@ -346,10 +373,10 @@ async function deliver(item, result) {
 }
 
 function setProgress(done, total) {
-  $('progress').value = done;
-  $('progress').max = total;
   $('progress-label').textContent = `${done} of ${total}`;
 }
+
+const drawRowProgress = (item) => item.bar?.style.setProperty('--mio-row-progress', item.progress);
 
 async function downloadZip() {
   let blob;
@@ -530,6 +557,7 @@ function updateRow(item) {
   item.notes.textContent = notes.join(' · ');
   item.notes.hidden = !notes.length;
   item.bar.hidden = item.status !== 'running';
+  drawRowProgress(item);
 
   item.sizes.textContent = item.after == null ? formatSize(item.before) : `${formatSize(item.before)} → ${formatSize(item.after)}`;
 
@@ -542,7 +570,7 @@ function updateRow(item) {
     if (amount === 0) savedParts.push(savedLine('mio-saved-amount', 'No change'));
     else {
       const sign = amount > 0 ? MINUS : '+';
-      savedParts.push(savedLine('mio-saved-percent', `${sign}${Math.abs(percent)}%`));
+      savedParts.push(savedLine('mio-saved-percent', `${sign}${Math.abs(percent) || '<1'}%`));
       savedParts.push(savedLine('mio-saved-amount', `${sign}${formatSize(Math.abs(amount))}`));
     }
   }

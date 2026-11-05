@@ -34,10 +34,13 @@ export function detect(bytes) {
   if (ascii(bytes, 0, 4) === '%PDF') return { supported: false, reason: 'PDF' };
 
   if (ascii(bytes, 4, 4) === 'ftyp') {
-    const brand = ascii(bytes, 8, 4);
-    if (brand === 'avis') return { supported: false, reason: 'Animated image' };
-    if (AVIF_BRANDS.has(brand)) return { supported: true, format: 'avif' };
-    if (HEIC_BRANDS.has(brand)) return { supported: true, format: 'heic' };
+    // The main brand alone isn't enough, as AVIF files can have mif1 there and avif further along.
+    const end = Math.min(new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0), bytes.length);
+    const brands = [ascii(bytes, 8, 4)];
+    for (let offset = 16; offset + 4 <= end; offset += 4) brands.push(ascii(bytes, offset, 4));
+    if (brands.includes('avis')) return { supported: false, reason: 'Animated image' };
+    if (brands.some((brand) => AVIF_BRANDS.has(brand))) return { supported: true, format: 'avif' };
+    if (HEIC_BRANDS.has(brands[0])) return { supported: true, format: 'heic' };
     return { supported: false, reason: 'Video' };
   }
 

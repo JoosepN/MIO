@@ -94,8 +94,10 @@ export async function optimize(file, settings) {
     if (!best || encoded.byteLength < best.encoded.byteLength) best = { encoded, format, quality };
   }
 
-  // Never make a file worse. A requested resize still has to be honoured, though.
-  if (!sizeChanged && best.encoded.byteLength >= file.size) {
+  // Never make a file worse, unless that goes against what was asked for: a requested resize or
+  // format is honoured even when larger, and HEIC always converts because most browsers can't show it.
+  const changesFormat = best.format !== info.format && (['webp', 'jpeg', 'png'].includes(settings.convert) || info.format === 'heic');
+  if (!sizeChanged && !changesFormat && best.encoded.byteLength >= file.size) {
     return {
       status: 'done', kept: true, before: file.size, after: file.size,
       format: info.format, extension: null, width: decoded.width, height: decoded.height,

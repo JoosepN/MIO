@@ -1,9 +1,15 @@
 // Finds the lowest quality that still reaches the target, measured on a few crops.
 // Whole-image scoring needs ~150 MB per megapixel and ~2 s per megapixel, so it can't run in a batch.
-import { CROP_MARGIN, FALLBACK_QUALITY, MAX_PROBES, QUALITY_RANGE, TILE_SIZE } from './config.js';
+import { CROP_MARGIN, CROP_PICKS, FALLBACK_QUALITY, MAX_PROBES, QUALITY_RANGE, SEARCH_SLOPE, SEARCH_TOLERANCE, TILE_SIZE } from './config.js';
 import { decodeWithBrowser } from './decode.js';
 
 let metric = null;
+let onScored = null;
+
+// Told how long scoring takes on this device, in ms per megapixel.
+export function setScoreListener(listener) {
+  onScored = listener;
+}
 
 async function loadMetric() {
   if (metric) return metric;
@@ -37,12 +43,14 @@ function loadRgb(key, { data, width, height }, backdrop) {
 // Transparent images have to hold up on light and dark pages, so the worse backdrop counts.
 function score(source, candidate) {
   const backdrops = hasAlpha(source) || hasAlpha(candidate) ? [255, 0] : [255];
+  const started = performance.now();
   let worst = Infinity;
   for (const backdrop of backdrops) {
     loadRgb('source', source, backdrop);
     loadRgb('candidate', candidate, backdrop);
     worst = Math.min(worst, metric.calc('source', 'candidate', source.width, source.height));
   }
+  onScored?.((performance.now() - started) / backdrops.length / (source.width * source.height / 1e6));
   return worst;
 }
 
@@ -55,59 +63,81 @@ function crop({ data, width }, x, y, w, h) {
   return new ImageData(out, w, h);
 }
 
-function detail({ data, width }, x, y, size) {
+function detail({ data, width }, x, y, w, h) {
   let total = 0;
-  for (let row = y; row < y + size; row += 2) {
+  for (let row = y; row < y + h; row += 2) {
     let i = (row * width + x) * 4;
-    for (let col = 0; col < size - 2; col += 2, i += 8) total += Math.abs(data[i + 1] - data[i + 9]);
+    for (let col = 0; col < w - 2; col += 2, i += 8) total += Math.abs(data[i + 1] - data[i + 9]);
   }
   return total;
 }
 
 // The busiest area plus three further down the ranking, so texture, edges and calmer areas all count.
-// Small images are scored whole.
+// Only images up to a megapixel are scored whole, whatever their shape, because cost follows pixels.
 function pickRegions(source, requested) {
   const { width, height } = source;
-  const size = TILE_SIZE;
-  if (width < size * 2 || height < size * 2 || width * height <= 1e6) {
+  if (width * height <= 1e6) {
     return { regions: [{ x: 0, y: 0, w: width, h: height }], target: requested };
   }
+  const w = Math.min(TILE_SIZE, width);
+  const h = Math.min(TILE_SIZE, height);
   const cells = [];
-  for (let y = 0; y + size <= height; y += size) {
-    for (let x = 0; x + size <= width; x += size) cells.push({ x, y, w: size, h: size, rank: detail(source, x, y, size) });
+  for (let y = 0; y + h <= height; y += h) {
+    for (let x = 0; x + w <= width; x += w) cells.push({ x, y, w, h, rank: detail(source, x, y, w, h) });
   }
   cells.sort((a, b) => b.rank - a.rank);
-  const picks = [0, 0.25, 0.5, 0.75].map((p) => cells[Math.floor(p * (cells.length - 1))]);
+  const picks = CROP_PICKS.map((p) => cells[Math.floor(p * (cells.length - 1))]);
   return { regions: [...new Set(picks)], target: requested + CROP_MARGIN };
 }
 
 const tooSmallToScore = ({ width, height }) => width < 16 || height < 16;
 
 // encode(image, quality) returns an ArrayBuffer. requested is the score the output has to reach.
-export async function searchQuality(source, encode, requested) {
+// Starts near the usual answer and uses each measured score to jump close to the next try.
+export async function searchQuality(source, encode, requested, start) {
   if (tooSmallToScore(source)) return { quality: FALLBACK_QUALITY, score: null };
   await loadMetric();
   const { regions, target } = pickRegions(source, requested);
   const tiles = regions.map(({ x, y, w, h }) => crop(source, x, y, w, h));
+  let order = tiles.map((_, index) => index);
 
-  const passes = async (quality) => {
+  // The crop that scored worst goes first next time, as one failing crop rules a quality out.
+  const worstScore = async (quality) => {
     let worst = Infinity;
-    for (const tile of tiles) {
-      const encoded = await encode(tile, quality);
-      worst = Math.min(worst, score(tile, await decodeWithBrowser(encoded)));
-      if (worst < target) return { pass: false, value: worst }; // One failing crop rules it out.
+    let hardest = order[0];
+    for (const index of order) {
+      const encoded = await encode(tiles[index], quality);
+      const value = score(tiles[index], await decodeWithBrowser(encoded));
+      if (value < worst) { worst = value; hardest = index; }
+      if (value < target) break;
     }
-    return { pass: true, value: worst };
+    order = [hardest, ...order.filter((index) => index !== hardest)];
+    return worst;
   };
 
   let [lo, hi] = QUALITY_RANGE;
   let best = null;
-  for (let probe = 0; probe < MAX_PROBES && hi - lo > 3; probe++) {
-    const quality = Math.round((lo + hi) / 2);
-    const { pass, value } = await passes(quality);
-    if (pass) { hi = quality; best = { quality, score: value }; } else lo = quality;
+  let quality = start;
+  let previous = null;
+  for (let probe = 0; probe < MAX_PROBES; probe++) {
+    const value = await worstScore(quality);
+    if (value >= target) {
+      hi = quality;
+      best = { quality, score: value };
+      if (value - target < SEARCH_TOLERANCE) break;
+    } else {
+      lo = quality;
+    }
+    if (hi - lo <= 2) break;
+    const measured = previous ? (value - previous.value) / (quality - previous.quality) : 0;
+    const slope = measured > 0.1 && measured < 3 ? measured : SEARCH_SLOPE;
+    previous = { quality, value };
+    // Staying away from the known limits narrows the range on every try, however far off the slope is.
+    // Without this, one bad jump can use up the tries and leave a far too high quality.
+    const inset = Math.max(1, Math.ceil((hi - lo) / 5));
+    quality = Math.max(lo + inset, Math.min(hi - inset, Math.round(quality + (target + SEARCH_TOLERANCE / 2 - value) / slope)));
   }
-  return best ?? { quality: QUALITY_RANGE[1], score: null };
+  return best ?? { quality: hi, score: null };
 }
 
 // For outputs with no quality dial, like a quantized PNG: does this version clear the target?
