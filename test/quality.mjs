@@ -26,9 +26,9 @@ console.log('Default level:', await page.locator('input[name="quality"]:checked'
 for (const convert of ['keep', 'jpeg', 'webp']) {
   for (const quality of ['smaller', 'balanced', 'higher']) {
     await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
+    await page.locator('#pick-files').setInputFiles(files);
     await page.locator(`input[name="convert"][value="${convert}"]`).check({ force: true });
     await page.locator(`input[name="quality"][value="${quality}"]`).check({ force: true });
-    await page.locator('#pick-files').setInputFiles(files);
     const t0 = Date.now();
     await page.locator('#run').click();
     await page.waitForFunction(() => /^Finished/.test(document.getElementById('progress-label').textContent), null, { timeout: 200000 });

@@ -65,8 +65,8 @@ const rows = () => page.locator('#rows tr').evaluateAll((trs) => trs.map((tr) =>
 
 async function zipOne(file, name, setup) {
   await open();
-  await setup();
   await page.locator('#pick-files').setInputFiles(file);
+  await setup();
   await page.locator('#run').click();
   await finished();
   const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#zip').click()]);

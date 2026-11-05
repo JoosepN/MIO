@@ -18,9 +18,15 @@
         </p>
     </div>
 
+    <div id="options" hidden class="mio-options mio-reveal">
     <div class="mio-card mio-settings">
         <fieldset>
-            <legend class="mio-heading">Resize <span class="mio-optional">(optional)</span></legend>
+            <legend class="mio-sr">Resize</legend>
+            <label class="mio-check mio-check-first mio-heading">
+                <input id="resize" type="checkbox" class="mio-focus">
+                Resize
+            </label>
+            <div id="resize-fields" hidden class="mio-reveal">
             <div class="mio-fields">
                 <label class="mio-field">Max width
                     <span class="mio-input-wrap">
@@ -39,6 +45,7 @@
                 <input id="no-enlarge" type="checkbox" checked class="mio-focus">
                 Don't enlarge smaller images
             </label>
+            </div>
         </fieldset>
 
         <fieldset>
@@ -74,18 +81,19 @@
         <button id="zip" type="button" hidden class="mio-focus mio-btn mio-btn-lg mio-btn-primary">Download</button>
         <p id="output-note" class="mio-help mio-note" aria-live="polite"></p>
     </div>
+    </div>
 
     <div id="progress-wrap" hidden class="mio-card">
         <p id="progress-label" class="mio-progress-label" aria-live="polite"></p>
         <progress id="progress" value="0" max="1" aria-label="Batch progress"></progress>
     </div>
 
-    <div id="results" hidden class="mio-card">
-        <div class="mio-totals">
+    <div id="results" hidden class="mio-card mio-reveal">
+        <div id="totals" hidden class="mio-totals">
             <p id="total-saved"></p>
-            <p class="mio-totals-text">saved · <span id="total-sizes"></span> · <span id="total-count"></span></p>
+            <p class="mio-totals-text"><span id="total-sizes"></span> · <span id="total-count"></span></p>
         </div>
-        <p id="compare-hint" hidden class="mio-help">Select an image's name to compare it with the original.</p>
+        <p id="compare-hint" hidden class="mio-help"></p>
         <div class="mio-table-wrap">
             <table class="mio-table">
                 <thead>
@@ -93,8 +101,6 @@
                         <th><button type="button" data-sort="name" class="mio-focus mio-sort">Name</button></th>
                         <th><button type="button" data-sort="after" class="mio-focus mio-sort">Before → after</button></th>
                         <th><button type="button" data-sort="saved" class="mio-focus mio-sort">Saved</button></th>
-                        <th><button type="button" data-sort="format" class="mio-focus mio-sort">Format</button></th>
-                        <th>Notes</th>
                     </tr>
                 </thead>
                 <tbody id="rows"></tbody>

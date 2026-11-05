@@ -25,11 +25,14 @@ for (const { name, ...options } of views) {
   const shot = (state) => page.screenshot({ path: join(out, `${name}-${state}.png`), fullPage: state !== 'compare' && state !== 'overwrite' });
 
   await shot('empty');
-  await page.locator('input[name="convert"][value="jpeg"]').check({ force: true });
-  await shot('jpeg-chosen');
-  await page.locator('input[name="convert"][value="keep"]').check({ force: true });
   await page.locator('#pick-files').setInputFiles(files);
+  await page.waitForTimeout(1500);
   await shot('ready');
+  await page.locator('#resize').check();
+  await page.locator('input[name="convert"][value="jpeg"]').check({ force: true });
+  await shot('options-open');
+  await page.locator('#resize').uncheck();
+  await page.locator('input[name="convert"][value="keep"]').check({ force: true });
   await page.locator('#run').click();
   await page.waitForFunction(() => /^Finished/.test(document.getElementById('progress-label').textContent), null, { timeout: 120000 });
   await page.locator('#rows button').first().waitFor();

@@ -28,8 +28,8 @@ async function runWith(label, setup) {
   await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  await setup();
   await page.locator('#pick-files').setInputFiles(files);
+  await setup();
   const t0 = Date.now();
   await page.locator('#run').click();
   await page.waitForFunction(() => /^Finished/.test(document.getElementById('progress-label').textContent), null, { timeout: 270000 })
@@ -48,6 +48,7 @@ async function runWith(label, setup) {
 const only = process.argv[3];
 if (!only || only === 'keep') await runWith('Keep original', async () => {});
 if (!only || only === 'resize') await runWith('WebP, max 1600 px', async () => {
+  await page.locator('#resize').check();
   await page.locator('#width').fill('1600');
   await page.locator('#height').fill('1600');
   await page.locator('input[value="webp"]').check({ force: true });

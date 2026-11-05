@@ -1,17 +1,16 @@
 // The tool page. It reads files, calls the engine, and writes results. All image work is in ../engine.
-import { runBatch, viewableOriginal } from '../engine/index.js';
+import { createThumbnailer, runBatch, viewableOriginal } from '../engine/index.js';
 import { openCompare, setupCompare } from './compare.js';
 import './tool.css';
 
 const $ = (id) => document.getElementById(id);
 const STORAGE_KEY = 'image-optimizer-settings';
+const THUMB_SIZE = 112; // Twice the size it's shown at, for sharp screens.
 const canPickFolder = 'showDirectoryPicker' in window;
 const supported = 'OffscreenCanvas' in window; // Safari before 16.4 can't process images in a worker.
 
 const state = {
-  items: [],
-  rows: [],
-  skipped: 0,
+  items: [], // Each one is a file and, once it has run, its result.
   sort: { key: 'order', dir: 1 },
   running: false,
   batch: null,
@@ -24,11 +23,14 @@ const state = {
   overwrite: false,
 };
 
+const thumbnails = createThumbnailer(THUMB_SIZE);
+
 // Settings ---------------------------------------------------------------
 
 function readSettings() {
-  const number = (el) => { const v = parseInt(el.value, 10); return v > 0 ? v : null; };
+  const number = (el) => { const v = parseInt(el.value, 10); return $('resize').checked && v > 0 ? v : null; };
   return {
+    resize: $('resize').checked,
     width: number($('width')),
     height: number($('height')),
     enlarge: !$('no-enlarge').checked,
@@ -39,13 +41,18 @@ function readSettings() {
 }
 
 function saveSettings() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(readSettings())); } catch { /* Private mode. */ }
+  try {
+    const settings = readSettings();
+    // Sizes stay remembered while resizing is off, so ticking it again brings them back.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, width: parseInt($('width').value, 10) || null, height: parseInt($('height').value, 10) || null }));
+  } catch { /* Private mode. */ }
 }
 
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (!saved) return;
+    $('resize').checked = !!saved.resize;
     if (saved.width) $('width').value = saved.width;
     if (saved.height) $('height').value = saved.height;
     $('no-enlarge').checked = !saved.enlarge;
@@ -61,10 +68,22 @@ const updateFillRow = () => {
   $('fill-row').hidden = readSettings().convert !== 'jpeg';
 };
 
+const updateResizeRow = () => {
+  $('resize-fields').hidden = !$('resize').checked;
+};
+
 // Input ------------------------------------------------------------------
 
 let nextId = 0;
-const addFile = (file, path) => state.items.push({ id: nextId++, file, path: path || file.name });
+
+function addFile(file, path) {
+  state.items.push({ id: nextId++, order: nextId, file, path: path || file.name, ...freshResult(file) });
+}
+
+const freshResult = (file) => ({
+  status: 'waiting', before: file.size, after: null, format: null, source: null,
+  comparable: false, flags: [], blob: null, outputPath: null,
+});
 
 function readEntries(reader) {
   return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
@@ -106,16 +125,19 @@ function handlePick(event) {
 }
 
 function filesChanged() {
-  $('file-count').textContent = state.items.length
-    ? `${state.items.length} ${state.items.length === 1 ? 'file' : 'files'} ready`
-    : '';
-  $('clear').hidden = !state.items.length;
+  const count = state.items.length;
+  $('file-count').textContent = count ? `${count} ${count === 1 ? 'file' : 'files'} ready` : '';
+  $('clear').hidden = !count;
+  $('options').hidden = !count;
+  buildRows();
+  renderResults();
   updateActions();
 }
 
 function clearAll() {
-  Object.assign(state, { items: [], rows: [], skipped: 0, sourceHandles: [], mode: null, outputDir: null, written: [], zipFiles: [] });
-  renderResults();
+  thumbnails.clear();
+  for (const item of state.items) releaseImage(item);
+  Object.assign(state, { items: [], sourceHandles: [], mode: null, outputDir: null, written: [], zipFiles: [] });
   filesChanged();
   $('progress-wrap').hidden = true;
   $('zip').hidden = true;
@@ -238,7 +260,11 @@ async function start(rerun) {
   state.running = true;
   updateActions();
   if (rerun && state.mode === 'folder') await removePreviousOutput();
-  Object.assign(state, { rows: [], skipped: 0, usedNames: new Set(), zipFiles: [] });
+  Object.assign(state, { usedNames: new Set(), zipFiles: [] });
+  for (const item of state.items) {
+    Object.assign(item, freshResult(item.file));
+    updateRow(item);
+  }
   $('zip').hidden = true;
   $('progress-wrap').hidden = false;
   renderResults();
@@ -253,12 +279,16 @@ async function start(rerun) {
   let delivering = Promise.resolve();
 
   state.batch = runBatch(state.items, readSettings(), {
+    onStart: (item) => {
+      item.status = 'running';
+      updateRow(item);
+    },
     onResult: (item, result) => {
       delivering = delivering.then(async () => {
-        const row = await deliver(item, result, done);
+        await deliver(item, result);
         done++;
-        state.rows.push(row);
         setProgress(done, total);
+        updateRow(item);
         renderResults();
       });
     },
@@ -266,7 +296,11 @@ async function start(rerun) {
       await delivering;
       state.running = false;
       state.batch = null;
+      for (const item of state.items) {
+        if (item.status === 'running') { item.status = 'waiting'; updateRow(item); }
+      }
       updateActions();
+      renderResults();
       $('progress-label').textContent = cancelled ? `Cancelled after ${done} of ${total}` : `Finished ${total} of ${total}`;
       if (!cancelled && state.mode === 'zip' && state.zipFiles.length) {
         $('zip').hidden = false;
@@ -277,21 +311,24 @@ async function start(rerun) {
   });
 }
 
-async function deliver(item, result, order) {
-  const row = { order, id: item.id, file: item.file, path: item.path, status: result.status, before: result.before, after: result.after ?? null, format: result.format ?? null, source: result.source ?? null, comparable: result.status === 'done' && !result.kept, flags: [] };
+async function deliver(item, result) {
+  Object.assign(item, {
+    status: result.status, before: result.before, after: result.after ?? null,
+    format: result.format ?? null, source: result.source ?? null,
+    comparable: result.status === 'done' && !result.kept, flags: [],
+  });
   if (result.status !== 'done') {
-    row.flags.push(result.status === 'skipped' ? `Skipped: ${result.reason}` : `Failed: ${result.reason}`);
-    row.problem = true;
-    return row;
+    item.flags.push(result.status === 'skipped' ? `Skipped: ${result.reason}` : `Failed: ${result.reason}`);
+    return;
   }
 
   const blob = result.kept ? item.file : result.blob;
   const { path, renamed } = outputPath(item, result);
   state.usedNames.add(path.toLowerCase());
-  row.outputPath = path;
-  if (result.kept) row.flags.push('Kept original');
-  if (result.filled) row.flags.push('Transparency filled');
-  if (renamed) row.flags.push('Renamed');
+  item.outputPath = path;
+  if (result.kept) item.flags.push('Kept original');
+  if (result.filled) item.flags.push('Transparency filled');
+  if (renamed) item.flags.push('Renamed');
 
   try {
     if (state.mode === 'folder') {
@@ -299,15 +336,13 @@ async function deliver(item, result, order) {
       state.written.push(path);
     } else {
       state.zipFiles.push({ name: path, input: blob, lastModified: new Date() });
-      row.blob = blob;
+      item.blob = blob;
     }
   } catch (error) {
-    row.status = 'failed';
-    row.problem = true;
-    row.comparable = false;
-    row.flags = [`Couldn't save: ${error.message}`];
+    item.status = 'failed';
+    item.comparable = false;
+    item.flags = [`Couldn't save: ${error.message}`];
   }
-  return row;
 }
 
 function setProgress(done, total) {
@@ -336,12 +371,37 @@ async function downloadZip() {
 
 function updateActions() {
   const has = state.items.length > 0;
+  const finished = state.items.some((item) => item.status !== 'waiting');
   $('run').disabled = !has || state.running || !supported;
-  $('run').textContent = state.rows.length && !state.running ? 'Run again' : 'Run';
+  $('run').textContent = finished && !state.running ? 'Run again' : 'Run';
   $('folder-instead').hidden = !canPickFolder || !has || state.running || state.mode !== null;
   $('cancel').hidden = !state.running;
   $('clear').hidden = !has || state.running;
 }
+
+// Previews ---------------------------------------------------------------
+
+function showImage(item, blob) {
+  if (!blob || !item.image?.isConnected) return;
+  if (item.imageUrl) URL.revokeObjectURL(item.imageUrl);
+  item.imageUrl = URL.createObjectURL(blob);
+  item.image.src = item.imageUrl;
+}
+
+function releaseImage(item) {
+  if (item.imageUrl) URL.revokeObjectURL(item.imageUrl);
+  item.imageUrl = null;
+}
+
+// Thumbnails are only made for rows that come into view, so a huge folder costs little up front.
+const thumbObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    thumbObserver.unobserve(entry.target);
+    const item = state.items.find((candidate) => candidate.image === entry.target);
+    if (item) thumbnails.add(item.file).then((blob) => showImage(item, blob));
+  }
+}, { rootMargin: '200px' });
 
 // Results ----------------------------------------------------------------
 
@@ -352,108 +412,179 @@ function formatSize(bytes) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-const savedPercent = (row) => (row.after == null ? null : Math.round((1 - row.after / row.before) * 100));
+const savedPercent = (item) => (item.after == null ? null : Math.round((1 - item.after / item.before) * 100));
 const FORMAT_LABEL = { jpeg: 'JPEG', png: 'PNG', webp: 'WebP', heic: 'HEIC', avif: 'AVIF', bmp: 'BMP' };
+const MINUS = '−';
 
 const SORTERS = {
-  order: (r) => r.order,
-  name: (r) => r.path.toLowerCase(),
-  after: (r) => r.after ?? -1,
-  saved: (r) => savedPercent(r) ?? -1,
-  format: (r) => r.format ?? '',
+  order: (item) => item.order,
+  name: (item) => item.path.toLowerCase(),
+  after: (item) => item.after ?? -1,
+  saved: (item) => savedPercent(item) ?? -1,
 };
 
-function sortedRows() {
+function sortedItems() {
   const { key, dir } = state.sort;
   const by = SORTERS[key];
-  return [...state.rows].sort((a, b) => (by(a) > by(b) ? dir : by(a) < by(b) ? -dir : 0));
+  return [...state.items].sort((a, b) => (by(a) > by(b) ? dir : by(a) < by(b) ? -dir : 0));
 }
 
 // Folder output is read back from disk, so a large batch doesn't stay in memory just in case.
-async function outputOf(row) {
-  if (row.blob) return row.blob;
-  const dir = await directoryFor(state.outputDir, row.outputPath, false);
-  const handle = await dir.getFileHandle(baseName(row.outputPath));
+async function outputOf(item) {
+  if (item.blob) return item.blob;
+  const dir = await directoryFor(state.outputDir, item.outputPath, false);
+  const handle = await dir.getFileHandle(baseName(item.outputPath));
   return handle.getFile();
 }
 
-function compareRow(row) {
+function compareItem(item) {
   openCompare({
-    title: baseName(row.outputPath),
-    before: viewableOriginal(row.file),
-    after: outputOf(row),
-    beforeLabel: `Original · ${FORMAT_LABEL[row.source] ?? ''} · ${formatSize(row.before)}`,
-    afterLabel: `Optimized · ${FORMAT_LABEL[row.format] ?? ''} · ${formatSize(row.after)}`,
+    title: baseName(item.outputPath),
+    before: viewableOriginal(item.file),
+    after: outputOf(item),
+    beforeLabel: `Original · ${FORMAT_LABEL[item.source] ?? ''} · ${formatSize(item.before)}`,
+    afterLabel: `Optimized · ${FORMAT_LABEL[item.format] ?? ''} · ${formatSize(item.after)}`,
   });
 }
 
+function buildRows() {
+  const single = state.items.length === 1;
+  document.querySelector('.mio').dataset.single = String(single);
+  thumbObserver.disconnect();
+  $('rows').replaceChildren(...sortedItems().map((item) => {
+    const tr = document.createElement('tr');
+
+    const file = document.createElement('td');
+    const layout = document.createElement('div');
+    layout.className = 'mio-file';
+
+    const thumb = document.createElement('div');
+    thumb.className = 'mio-thumb';
+    thumb.addEventListener('click', () => { if (item.comparable) compareItem(item); });
+    const image = document.createElement('img');
+    image.alt = '';
+    if (item.imageUrl && !single && item.imageIsThumb) image.src = item.imageUrl;
+    thumb.append(image);
+    item.image = image;
+
+    const text = document.createElement('div');
+    text.className = 'mio-file-text';
+    item.nameSlot = document.createElement('div');
+    item.notes = document.createElement('p');
+    item.notes.className = 'mio-notes';
+    item.bar = document.createElement('span');
+    item.bar.className = 'mio-row-bar';
+    text.append(item.nameSlot, item.notes, item.bar);
+
+    layout.append(thumb, text);
+    file.append(layout);
+    item.thumb = thumb;
+
+    item.sizes = document.createElement('td');
+    item.sizes.className = 'mio-sizes';
+    item.saved = document.createElement('td');
+
+    tr.append(file, item.sizes, item.saved);
+    updateRow(item);
+
+    if (single) {
+      // One image is shown large, so it uses the original rather than a thumbnail.
+      item.imageIsThumb = false;
+      viewableOriginal(item.file).then((blob) => showImage(item, blob)).catch(() => {});
+    } else if (!(item.imageUrl && item.imageIsThumb)) {
+      item.imageIsThumb = true;
+      thumbObserver.observe(image);
+    }
+    return tr;
+  }));
+}
+
+function updateRow(item) {
+  if (!item.nameSlot) return;
+  const folder = folderOf(item.path);
+  const name = baseName(item.path);
+  const parts = [];
+  if (folder) {
+    const span = document.createElement('span');
+    span.className = 'mio-path';
+    span.textContent = folder;
+    parts.push(span);
+  }
+  if (item.comparable) {
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'mio-focus mio-name';
+    open.textContent = name;
+    open.setAttribute('aria-label', `Compare ${name} with the original`);
+    open.addEventListener('click', () => compareItem(item));
+    parts.push(open);
+  } else {
+    parts.push(name);
+  }
+  item.nameSlot.replaceChildren(...parts);
+  item.thumb.dataset.comparable = String(item.comparable);
+
+  // The format only matters when it changed. Otherwise there's nothing to add.
+  const notes = [...item.flags];
+  if (item.format && item.source && item.format !== item.source) notes.unshift(`${FORMAT_LABEL[item.source]} → ${FORMAT_LABEL[item.format]}`);
+  item.notes.textContent = notes.join(' · ');
+  item.notes.hidden = !notes.length;
+  item.bar.hidden = item.status !== 'running';
+
+  item.sizes.textContent = item.after == null ? formatSize(item.before) : `${formatSize(item.before)} → ${formatSize(item.after)}`;
+
+  const percent = savedPercent(item);
+  const savedParts = [];
+  if (item.status === 'waiting' && state.running) savedParts.push(savedLine('mio-saved-amount', 'Waiting'));
+  else if (item.status === 'running') savedParts.push(savedLine('mio-saved-amount', 'Optimizing'));
+  else if (percent !== null) {
+    const amount = item.before - item.after;
+    if (amount === 0) savedParts.push(savedLine('mio-saved-amount', 'No change'));
+    else {
+      const sign = amount > 0 ? MINUS : '+';
+      savedParts.push(savedLine('mio-saved-percent', `${sign}${Math.abs(percent)}%`));
+      savedParts.push(savedLine('mio-saved-amount', `${sign}${formatSize(Math.abs(amount))}`));
+    }
+  }
+  item.saved.replaceChildren(...savedParts);
+}
+
+function savedLine(className, text) {
+  const line = document.createElement('span');
+  line.className = className;
+  line.textContent = text;
+  return line;
+}
+
 function renderResults() {
-  const has = state.rows.length > 0;
-  $('results').hidden = !has;
-  if (!has) return;
+  const count = state.items.length;
+  $('results').hidden = !count;
+  if (!count) return;
 
-  $('compare-hint').hidden = !state.rows.some((r) => r.comparable);
-
-  const processed = state.rows.filter((r) => r.after != null);
-  const before = processed.reduce((sum, r) => sum + r.before, 0);
-  const after = processed.reduce((sum, r) => sum + r.after, 0);
-  $('total-saved').textContent = before ? `${Math.round((1 - after / before) * 100)}%` : '0%';
+  const single = count === 1;
+  const processed = state.items.filter((item) => item.after != null);
+  const before = processed.reduce((sum, item) => sum + item.before, 0);
+  const after = processed.reduce((sum, item) => sum + item.after, 0);
+  $('totals').hidden = single || !processed.length;
+  const percent = before ? Math.round((1 - after / before) * 100) : 0;
+  $('total-saved').textContent = percent > 0 ? `${MINUS}${percent}%` : percent < 0 ? `+${-percent}%` : '0%';
   $('total-sizes').textContent = `${formatSize(before)} → ${formatSize(after)}`;
-  const problems = state.rows.length - processed.length;
+  const problems = state.items.filter((item) => item.status === 'skipped' || item.status === 'failed').length;
   $('total-count').textContent = `${processed.length} ${processed.length === 1 ? 'image' : 'images'}${problems ? `, ${problems} not processed` : ''}`;
+
+  const comparable = state.items.some((item) => item.comparable);
+  $('compare-hint').hidden = !comparable;
+  $('compare-hint').textContent = single ? 'Select the image to compare it with the original.' : 'Select an image or its name to compare it with the original.';
 
   document.querySelectorAll('[data-sort]').forEach((header) => {
     const active = header.dataset.sort === state.sort.key;
     header.closest('th').setAttribute('aria-sort', active ? (state.sort.dir > 0 ? 'ascending' : 'descending') : 'none');
   });
-
-  const body = $('rows');
-  body.replaceChildren(...sortedRows().map((row) => {
-    const tr = document.createElement('tr');
-    const folder = folderOf(row.path);
-    const saved = savedPercent(row);
-
-    const name = document.createElement('td');
-    if (folder) {
-      const span = document.createElement('span');
-      span.className = 'mio-path';
-      span.textContent = folder;
-      name.append(span);
-    }
-    if (row.comparable) {
-      const open = document.createElement('button');
-      open.type = 'button';
-      open.className = 'mio-focus mio-name';
-      open.textContent = baseName(row.path);
-      open.setAttribute('aria-label', `Compare ${baseName(row.path)} with the original`);
-      open.addEventListener('click', () => compareRow(row));
-      name.append(open);
-    } else {
-      name.append(baseName(row.path));
-    }
-
-    const sizes = document.createElement('td');
-    sizes.className = 'mio-sizes';
-    sizes.textContent = row.after == null ? formatSize(row.before) : `${formatSize(row.before)} → ${formatSize(row.after)}`;
-
-    const percent = document.createElement('td');
-    percent.className = 'mio-saved';
-    percent.textContent = saved == null ? '—' : `${saved}%`;
-
-    const format = document.createElement('td');
-    format.textContent = FORMAT_LABEL[row.format] ?? '—';
-
-    const flags = document.createElement('td');
-    flags.className = 'mio-flags';
-    flags.textContent = row.flags.join(' · ');
-
-    tr.append(name, sizes, percent, format, flags);
-    return tr;
-  }));
 }
 
 function setSort(key) {
-  state.sort = state.sort.key === key ? { key, dir: -state.sort.dir } : { key, dir: key === 'name' || key === 'format' ? 1 : -1 };
+  state.sort = state.sort.key === key ? { key, dir: -state.sort.dir } : { key, dir: key === 'name' ? 1 : -1 };
+  buildRows();
   renderResults();
 }
 
@@ -462,6 +593,7 @@ function setSort(key) {
 function init() {
   loadSettings();
   updateFillRow();
+  updateResizeRow();
   updateActions();
   setupCompare();
   if (!supported) $('output-note').textContent = 'This browser can\'t run the tool. Update it, or use a recent version of Chrome, Edge, Firefox or Safari.';
@@ -475,6 +607,7 @@ function init() {
 
   document.querySelectorAll('input[name="convert"], input[name="quality"]').forEach((radio) => radio.addEventListener('change', () => { updateFillRow(); saveSettings(); }));
   ['width', 'height', 'no-enlarge', 'fill'].forEach((id) => $(id).addEventListener('change', saveSettings));
+  $('resize').addEventListener('change', () => { updateResizeRow(); saveSettings(); });
 
   $('run').addEventListener('click', run);
   $('folder-instead').addEventListener('click', runToFolder);

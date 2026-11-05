@@ -44,9 +44,9 @@ async function run(name, convert, extra = async () => {}) {
   await page.goto(`${base}${process.env.MIO_PATH ?? '/tools/image-optimizer/'}`);
   await page.evaluate(() => localStorage.clear());
   await page.reload();
+  await page.locator('#pick-files').setInputFiles(files);
   await page.locator(`input[value="${convert}"]`).check({ force: true });
   await extra();
-  await page.locator('#pick-files').setInputFiles(files);
   await page.locator('#run').click();
   await page.waitForFunction(() => /^Finished/.test(document.getElementById('progress-label').textContent), null, { timeout: 120000 });
   const rows = await page.locator('#rows tr').evaluateAll((trs) => trs.map((tr) => [...tr.children].map((td) => td.textContent.trim()).join(' | ')));

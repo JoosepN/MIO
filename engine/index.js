@@ -30,6 +30,50 @@ export function viewableOriginal(file) {
   });
 }
 
+// Makes previews one at a time on a single worker, so they never compete much with the batch.
+export function createThumbnailer(size) {
+  const queue = [];
+  let worker = null;
+  let current = null;
+
+  function next() {
+    current = queue.shift() ?? null;
+    if (!current) { worker?.terminate(); worker = null; return; }
+    worker ??= start();
+    worker.postMessage({ preview: true, thumbSize: size, file: current.file });
+  }
+
+  function start() {
+    const created = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    created.onmessage = ({ data }) => { current?.resolve(data.blob ?? null); next(); };
+    created.onerror = (event) => {
+      event.preventDefault();
+      created.terminate();
+      worker = null;
+      current?.resolve(null);
+      next();
+    };
+    return created;
+  }
+
+  return {
+    add(file) {
+      return new Promise((resolve) => {
+        queue.push({ file, resolve });
+        if (!current) next();
+      });
+    },
+    clear() {
+      for (const job of queue) job.resolve(null);
+      queue.length = 0;
+      current?.resolve(null);
+      current = null;
+      worker?.terminate();
+      worker = null;
+    },
+  };
+}
+
 export function runBatch(items, settings, { onStart, onResult, onDone, concurrency = defaultConcurrency() }) {
   const queue = [...items];
   const workers = new Set();

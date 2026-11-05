@@ -1,9 +1,9 @@
-import { optimize, viewable } from './pipeline.js';
+import { optimize, thumbnail, viewable } from './pipeline.js';
 
-self.onmessage = async ({ data: { id, file, settings, preview } }) => {
+self.onmessage = async ({ data: { id, file, settings, preview, thumbSize } }) => {
   if (preview) {
     try {
-      postMessage({ blob: await viewable(file) });
+      postMessage({ blob: await (thumbSize ? thumbnail(file, thumbSize) : viewable(file)) });
     } catch (error) {
       postMessage({ error: String(error?.message ?? error) });
     }

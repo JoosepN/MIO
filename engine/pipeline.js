@@ -56,6 +56,21 @@ export async function viewable(file) {
   return canvas.convertToBlob({ type: 'image/png' });
 }
 
+// A small preview, or null for a file the tool can't read.
+export async function thumbnail(file, size) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const info = detect(bytes);
+  if (!info.supported) return null;
+  const source = info.format === 'heic' ? await createImageBitmap(await decode(bytes, info.format)) : await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, size / Math.min(source.width, source.height));
+  const canvas = new OffscreenCanvas(Math.max(1, Math.round(source.width * scale)), Math.max(1, Math.round(source.height * scale)));
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  source.close();
+  return canvas.convertToBlob({ type: 'image/png' });
+}
+
 export async function optimize(file, settings) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const info = detect(bytes);
